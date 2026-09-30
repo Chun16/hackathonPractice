@@ -52,6 +52,13 @@ h1,h2,h3,p{margin:0}
 .chip.focus{border-color:var(--low);color:var(--low)}
 .stage{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(320px,1fr);gap:22px;align-items:start}
 @media (max-width:980px){.stage{grid-template-columns:minmax(0,1fr)}}
+.viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:10px}
+.viewtabs{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel-2)}
+.vt{min-height:40px;padding:0 16px;border:0;background:transparent;font-weight:600;cursor:pointer;color:var(--muted)}
+.vt+.vt{border-left:1px solid var(--line)}
+.vt[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.vt:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}
+.viewhint{font-size:13px;color:var(--muted);min-width:0;flex:1 1 260px}
 .cam{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0A0F14}
 #scene{display:block;width:100%;height:auto;aspect-ratio:880/620;max-width:100%}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding-top:12px}
@@ -132,7 +139,14 @@ select{min-height:44px;padding:0 10px;border:1px solid var(--line);background:va
 </header>
 
 <main class="stage">
-  <section aria-label="AI scene view">
+  <section aria-label="Camera and scene view">
+    <div class="viewbar">
+      <div class="viewtabs" role="group" aria-label="Left panel view">
+        <button type="button" class="vt" id="vCctv" aria-pressed="true">CCTV camera</button>
+        <button type="button" class="vt" id="vScene" aria-pressed="false">AI scene view</button>
+      </div>
+      <p class="viewhint">CCTV camera: what the trailer's camera sees. AI scene view: the site rebuilt from CCTV and radar.</p>
+    </div>
     <div class="cam"><canvas id="scene" width="880" height="620" role="img" aria-label="AI scene view rebuilt from CCTV and radar: two same-direction lanes, the outer lane closed with cones, workers in the closed lane, a VMS trailer showing the sign board, and approaching vehicles with predicted paths"></canvas></div>
     <div class="controls">
       <label class="field" for="scn">Scenario <select id="scn"></select></label>
@@ -665,8 +679,20 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
   var W = 880, H = 620;
   /* Virtual camera behind and above the approaching traffic (scene rebuilt from CCTV + radar). */
   var V = { CX: 440, F: 10247, FH: 235980, H0: -768.1, DCAM: 250, XCAM: -1.0 };
-  function P(d, y, h) { var z = V.DCAM - d; return [V.CX + V.F * (-y - V.XCAM) / z, V.H0 + (V.FH - V.F * (h || 0)) / z, z]; }
-  function U(d) { return V.F / (V.DCAM - d); } // pixels per metre at distance d
+  /* CCTV camera: dome on the VMS trailer mast, facing oncoming traffic, turned toward the road and tilted down. */
+  var CAM = { d: 6, y: 7.0, h: 4.6, yaw: 20 * Math.PI / 180, pitch: 12 * Math.PI / 180, f: 845, CX: 440, CY: 310 };
+  CAM.sy = Math.sin(CAM.yaw); CAM.cy = Math.cos(CAM.yaw); CAM.sp = Math.sin(CAM.pitch); CAM.cp = Math.cos(CAM.pitch);
+  CAM.horizon = CAM.CY - CAM.f * Math.tan(CAM.pitch);
+  var mode = 'cctv';
+  function Ps(d, y, h) { var z = V.DCAM - d; return [V.CX + V.F * (-y - V.XCAM) / z, V.H0 + (V.FH - V.F * (h || 0)) / z, z]; }
+  function Pc(d, y, h) {
+    var fw = d - CAM.d, r = y - CAM.y, u = (h || 0) - CAM.h;
+    var xc = fw * CAM.sy + r * CAM.cy, zc = fw * CAM.cy - r * CAM.sy;
+    var dep = zc * CAM.cp - u * CAM.sp, up = zc * CAM.sp + u * CAM.cp;
+    return [CAM.CX + CAM.f * xc / dep, CAM.CY - CAM.f * up / dep, dep];
+  }
+  function P(d, y, h) { return mode === 'cctv' ? Pc(d, y, h) : Ps(d, y, h); }
+  function U(d, y) { return mode === 'cctv' ? CAM.f / Pc(d, y || 0, 0)[2] : V.F / (V.DCAM - d); } // pixels per metre
 
   var canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -752,7 +778,8 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
   }
 
   function drawCone(q, nowMs) {
-    var p = P(q.d, q.y), u = U(q.d), h = 0.7 * u, w = 0.42 * u;
+    var p = P(q.d, q.y), u = U(q.d, q.y), h = 0.7 * u, w = 0.42 * u;
+    if (p[2] < 2) return;
     if (q.knocked) {
       var x = p[0] + q.knocked * -0.35 * u;
       ctx.fillStyle = '#FF6A1A'; ctx.beginPath(); ctx.ellipse(x, p[1] - 0.12 * u, 0.36 * u, 0.13 * u, q.knocked * 0.3, 0, 6.283); ctx.fill();
@@ -925,6 +952,7 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
     if (c.pts && c.pts.length > 1 && c.v > 0.5 && c.d > C.RANGE_MIN + 2) {
       var dd = b.d - c.d0;
       var pts = c.pts.map(function (q) { return P(q[0] + dd, q[1] + (b.y - c.y0)); });
+      if (mode === 'cctv') pts = pts.filter(function (q) { return q[2] > 3; });
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.setLineDash(hi ? [1, 9] : [1, 8]);
       ctx.globalAlpha = hi ? 1 : 0.7;
@@ -944,8 +972,14 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
       ctx.globalAlpha = 1;
     }
     // brackets around the car
-    var dr = b.d + b.len, a = P(dr, b.y + 1.05, 0), bq = P(dr, b.y - 1.05, 0), t1 = P(b.d + 1.2, b.y, 1.55);
-    var x0 = a[0] - 3, x1 = bq[0] + 3, y1 = a[1] + 3, y0 = Math.min(t1[1], P(dr, b.y, 1.5)[1]) - 3;
+    var x0, x1, y0, y1;
+    if (mode === 'cctv') {
+      var R = carRectCCTV(c, b); if (!R) { ctx.restore(); return; }
+      x0 = R[0] - 3; y0 = R[1] - 3; x1 = R[2] + 3; y1 = R[3] + 3;
+    } else {
+      var dr = b.d + b.len, a = P(dr, b.y + 1.05, 0), bq = P(dr, b.y - 1.05, 0), t1 = P(b.d + 1.2, b.y, 1.55);
+      x0 = a[0] - 3; x1 = bq[0] + 3; y1 = a[1] + 3; y0 = Math.min(t1[1], P(dr, b.y, 1.5)[1]) - 3;
+    }
     var L = Math.max(7, Math.min(x1 - x0, y1 - y0) * 0.28);
     function br() {
       ctx.beginPath();
@@ -963,7 +997,158 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
     ctx.restore();
   }
 
+
+  /* ---------- CCTV view ---------- */
+  function carFrame(c, b) {
+    var phi = Math.atan2(c.vy, Math.max(c.v, 0.5));
+    var hd = -Math.cos(phi), hy = Math.sin(phi), ld = Math.sin(phi), ly = Math.cos(phi);
+    var cd = b.d + b.len / 2, cy = b.y;
+    return { pt: function (a, s, h) { return [cd + a * hd + s * ld, cy + a * hy + s * ly, h]; }, hd: hd, hy: hy, ld: ld, ly: ly, cd: cd, cy: cy };
+  }
+  function faceVisible(nd, ny, nh, cd, cy, ch) { return nd * (CAM.d - cd) + ny * (CAM.y - cy) + nh * (CAM.h - ch) > 0; }
+  function box(F, a0, a1, s0, s1, h0, h1, col) {
+    var pt = F.pt, vis = {};
+    var cx = (a0 + a1) / 2, cs = (s0 + s1) / 2, ch = (h0 + h1) / 2;
+    function ctr(a, s) { var q = pt(a, s, 0); return q; }
+    var faces = [
+      ['front', [F.hd, F.hy, 0], ctr(a1, cs), [pt(a1, s0, h0), pt(a1, s1, h0), pt(a1, s1, h1), pt(a1, s0, h1)], col.front],
+      ['back', [-F.hd, -F.hy, 0], ctr(a0, cs), [pt(a0, s0, h0), pt(a0, s1, h0), pt(a0, s1, h1), pt(a0, s0, h1)], col.back || col.side],
+      ['right', [F.ld, F.ly, 0], ctr(cx, s1), [pt(a0, s1, h0), pt(a1, s1, h0), pt(a1, s1, h1), pt(a0, s1, h1)], col.side],
+      ['left', [-F.ld, -F.ly, 0], ctr(cx, s0), [pt(a0, s0, h0), pt(a1, s0, h0), pt(a1, s0, h1), pt(a0, s0, h1)], col.side],
+      ['top', [0, 0, 1], ctr(cx, cs), [pt(a0, s0, h1), pt(a1, s0, h1), pt(a1, s1, h1), pt(a0, s1, h1)], col.top]
+    ];
+    faces.forEach(function (fc) {
+      var n = fc[1], c = fc[2], hh = fc[0] === 'top' ? h1 : ch;
+      if (faceVisible(n[0], n[1], n[2], c[0], c[1], hh)) { vis[fc[0]] = true; gpoly(fc[3], fc[4]); }
+    });
+    return vis;
+  }
+  function carRectCCTV(c, b) {
+    var F = carFrame(c, b), L = b.len / 2, x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, bad = false;
+    [-L, L].forEach(function (a) { [-0.95, 0.95].forEach(function (s) { [0, 1.45].forEach(function (h) {
+      var q = P.apply(null, F.pt(a, s, h)); if (q[2] < 3) bad = true;
+      x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+    }); }); });
+    return bad ? null : [x0, y0, x1, y1];
+  }
+  function drawCarCCTV(c, f, S) {
+    var b = carBox(c, f), F = carFrame(c, b), L = b.len / 2, body = c.color || '#8C97A3';
+    if (!carRectCCTV(c, b)) return;
+    ctx.save();
+    var fade = c.d > 96 ? Math.max(0.2, (100 - c.d0) / 4 + 0.2) : 1; ctx.globalAlpha = Math.min(1, fade);
+    gpoly([F.pt(-L - 0.3, -1.1, 0), F.pt(L + 0.3, -1.1, 0), F.pt(L + 0.3, 1.1, 0), F.pt(-L - 0.3, 1.1, 0)], 'rgba(0,0,0,.35)');
+    var vb = box(F, -L, L, -0.9, 0.9, 0.3, 0.88, { front: shade(body, -0.08), back: shade(body, -0.25), side: shade(body, -0.2), top: shade(body, 0.1) });
+    var vc = box(F, -L + 0.9, L - 1.2, -0.78, 0.78, 0.88, 1.45, { front: '#22303C', back: '#1C2733', side: '#26333F', top: shade(body, -0.05) });
+    // wheels on the side the camera can see
+    [0.93, -0.93].forEach(function (s) {
+      if (!vb[s > 0 ? 'right' : 'left']) return;
+      [L - 1.1, -L + 1.1].forEach(function (a) { gpoly([F.pt(a - 0.34, s, 0), F.pt(a + 0.34, s, 0), F.pt(a + 0.34, s, 0.6), F.pt(a - 0.34, s, 0.6)], '#15181C'); });
+    });
+    if (vb.front) {
+      var a = L + 0.01;
+      gpoly([F.pt(a, 0.52, 0.6), F.pt(a, 0.84, 0.6), F.pt(a, 0.84, 0.74), F.pt(a, 0.52, 0.74)], '#F6F2DA');
+      gpoly([F.pt(a, -0.84, 0.6), F.pt(a, -0.52, 0.6), F.pt(a, -0.52, 0.74), F.pt(a, -0.84, 0.74)], '#F6F2DA');
+      gpoly([F.pt(a, -0.36, 0.42), F.pt(a, 0.36, 0.42), F.pt(a, 0.36, 0.56), F.pt(a, -0.36, 0.56)], '#1B1F24');
+      gpoly([F.pt(a, -0.26, 0.32), F.pt(a, 0.26, 0.32), F.pt(a, 0.26, 0.4), F.pt(a, -0.26, 0.4)], '#E7E8E4');
+    }
+    if (vc.front) {
+      var w = L - 1.2 + 0.01;
+      gpoly([F.pt(w, -0.66, 0.95), F.pt(w, 0.66, 0.95), F.pt(w, 0.6, 1.4), F.pt(w, -0.6, 1.4)], 'rgba(150,180,200,.18)');
+    }
+    ctx.restore();
+  }
+  function boxAA(d0, d1, y0, y1, h0, h1, col) {
+    var F = { pt: function (a, s, h) { return [a, s, h]; }, hd: 1, hy: 0, ld: 0, ly: 1 };
+    // axis-aligned: a runs along d (front = +d), s along y
+    return box(F, d0, d1, y0, y1, h0, h1, col);
+  }
+  function drawArrowBoardBack() {
+    var d = 62, y = 4.1;
+    if (P(d, y)[2] < 3) return;
+    gpoly([[d - 0.9, y - 0.95, 0], [d + 0.9, y - 0.95, 0], [d + 0.9, y + 0.95, 0], [d - 0.9, y + 0.95, 0]], 'rgba(0,0,0,.25)');
+    boxAA(d - 0.8, d + 0.8, y - 0.7, y + 0.7, 0.45, 0.95, { front: '#E5AA00', back: '#F2B705', side: '#D69F00', top: '#F5C42F' });
+    gpoly([[d, y - 0.05, 0.95], [d, y + 0.05, 0.95], [d, y + 0.05, 1.3], [d, y - 0.05, 1.3]], '#9EA4AA');
+    boxAA(d - 0.06, d + 0.06, y - 0.8, y + 0.8, 1.25, 2.2, { front: '#101316', back: '#2B3035', side: '#22262A', top: '#3A3F44' });
+  }
+  var trees = []; (function () { var x = 0, seed = 7; function r() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; } while (x < 900) { var w = 20 + r() * 50; trees.push([x, w, 8 + r() * 18]); x += w * 0.7; } })();
+  var noiseCanvas = null;
+  function noise() {
+    if (noiseCanvas) return noiseCanvas;
+    noiseCanvas = document.createElement('canvas'); noiseCanvas.width = 220; noiseCanvas.height = 160;
+    var o = noiseCanvas.getContext('2d'), im = o.createImageData(220, 160);
+    for (var i = 0; i < im.data.length; i += 4) { var v = Math.random() * 255; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; }
+    o.putImageData(im, 0, 0); return noiseCanvas;
+  }
+  function drawGroundCCTV() {
+    var hy = CAM.horizon;
+    var g = ctx.createLinearGradient(0, 0, 0, hy); g.addColorStop(0, '#93AEC3'); g.addColorStop(1, '#D5DFE6');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, hy + 1);
+    ctx.fillStyle = '#5B6E57'; trees.forEach(function (t) { ctx.beginPath(); ctx.ellipse(t[0], hy + 1, t[1] / 2, t[2], 0, Math.PI, 2 * Math.PI); ctx.fill(); });
+    var gg = ctx.createLinearGradient(0, hy, 0, H); gg.addColorStop(0, '#7A8C63'); gg.addColorStop(1, '#5A7242');
+    ctx.fillStyle = gg; ctx.fillRect(0, hy, W, H - hy);
+    var D0 = 9, D1 = 1500;
+    gpoly([[D0, 4.6], [D1, 4.6], [D1, -3.9], [D0, -3.9]], '#40464D');
+    gpoly([[D0, 4.6], [D1, 4.6], [D1, 3.5], [D0, 3.5]], '#50565C');
+    gpoly([[D0, -3.9], [D1, -3.9], [D1, -4.3], [D0, -4.3]], '#6B6F72');
+    gpoly([[D0, 3.58], [D1, 3.58], [D1, 3.44], [D0, 3.44]], 'rgba(245,245,240,.9)');
+    gpoly([[D0, -3.44], [D1, -3.44], [D1, -3.58], [D0, -3.58]], 'rgba(245,245,240,.9)');
+    for (var d = D0; d < 700; d += 12) gpoly([[d, 0.07], [d + 3, 0.07], [d + 3, -0.07], [d, -0.07]], 'rgba(245,245,240,.85)');
+    gpoly([[D0, -4.95, 0.78], [D1, -4.95, 0.78], [D1, -4.95, 0.5], [D0, -4.95, 0.5]], '#AEB4BA');
+    for (d = D0; d < 160; d += 4) gpoly([[d, -4.9, 0], [d + 0.12, -4.9, 0], [d + 0.12, -4.9, 0.78], [d, -4.9, 0.78]], '#7E858C');
+    gpoly([[C.TAPER_START_D, 3.5], [C.TAPER_END_D, 0], [D0, 0], [D0, 3.5]], 'rgba(255,140,40,.10)');
+  }
+  function renderCCTV(S, f, showAI, nowMs) {
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    drawGroundCCTV();
+    var items = [];
+    S.cones.forEach(function (q) { var p = P(q.d, q.y); if (p[2] > 2) items.push({ z: p[2], fn: function () { drawCone(q, nowMs); } }); });
+    items.push({ z: P(62, 4.1)[2], fn: drawArrowBoardBack });
+    var cars = S.cars.filter(function (c) { return !c.gone; });
+    cars.forEach(function (c) { var b = carBox(c, f); items.push({ z: P(b.d + b.len / 2, b.y)[2], fn: function () { drawCarCCTV(c, f, S); } }); });
+    items.sort(function (a, b) { return b.z - a.z; });
+    items.forEach(function (it) { it.fn(); });
+    // camera look: sensor noise and vignette
+    ctx.save(); ctx.globalAlpha = 0.07; ctx.globalCompositeOperation = 'overlay';
+    var nz = noise(), ox = reduced ? 0 : Math.floor(Math.random() * 60), oy = reduced ? 0 : Math.floor(Math.random() * 40);
+    ctx.drawImage(nz, ox, oy, 160, 120, 0, 0, W, H); ctx.restore();
+    var vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 0.95);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.35)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    if (showAI) cars.forEach(function (c) {
+      if (!c.inRange) return;
+      var R = carRectCCTV(c, carBox(c, f));
+      if (R && R[0] > -20 && R[2] < W + 20 && R[3] < H + 20) drawOverlay(c, f, S);
+    });
+    // HUD
+    ctx.font = '600 11.5px "IBM Plex Mono", ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    var camLab = 'REC  CAM 01 · VMS TRAILER · ONCOMING';
+    rr(10, 10, ctx.measureText(camLab).width + 36, 26, 3, 'rgba(10,14,18,.72)');
+    var rec = reduced || Math.floor(nowMs / 600) % 2 === 0;
+    ctx.fillStyle = rec ? '#FF4D52' : '#5B2225'; ctx.beginPath(); ctx.arc(23, 23, 4.5, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#EAF0F5'; ctx.fillText(camLab, 34, 23.5);
+    var sec = Math.floor(S.t), ts = '30/09/2026 10:30:' + (sec < 10 ? '0' : '') + sec + '.' + Math.floor((S.t % 1) * 10);
+    var tw = ctx.measureText(ts).width + 16;
+    rr(W - tw - 10, 10, tw, 26, 3, 'rgba(10,14,18,.72)'); ctx.fillStyle = '#EAF0F5'; ctx.fillText(ts, W - tw - 2, 23.5);
+    var lab = showAI ? 'CCTV · AI DETECTIONS ON' : 'CCTV · RAW FEED';
+    var lw = ctx.measureText(lab).width + 16;
+    rr(10, H - 36, lw, 26, 3, 'rgba(10,14,18,.72)'); ctx.fillStyle = '#EAF0F5'; ctx.fillText(lab, 18, H - 22.5);
+    if (showAI && S.sys > 0) {
+      var pr = S.primary, bt = 'L' + S.sys + ' ' + BG.LEVEL_NAME[S.sys] + (pr ? ' · #' + pr.id : '');
+      ctx.font = '700 20px "Barlow Condensed", "Arial Narrow", sans-serif';
+      var bw = Math.min(W - 340, ctx.measureText(bt).width + 28);
+      rr(W / 2 - bw / 2, 44, bw, 32, 4, S.sys === 2 ? '#FF4D52' : '#FF9A4D');
+      ctx.fillStyle = S.sys === 2 ? '#1F0507' : '#1A0A02'; ctx.textAlign = 'center'; ctx.fillText(bt, W / 2, 60.5);
+    }
+    if (showAI) {
+      var nt = S.held ? 'Auto-STOP held: a car is too close to stop' : (S.l2Lock && S.board === 'STOP') ? 'Board locked on STOP until controller release' : '';
+      if (nt) { ctx.font = '600 11px "IBM Plex Mono", ui-monospace, monospace'; var nw = ctx.measureText(nt).width + 12; chip(nt, W - 10 - nw, 44, 'rgba(10,14,18,.88)', S.held ? '#FFB35A' : '#FF8A8D', 11); }
+    }
+  }
   function render(S, f, showAI, nowMs) {
+    if (mode === 'cctv') renderCCTV(S, f, showAI, nowMs); else renderScene(S, f, showAI, nowMs);
+  }
+
+  function renderScene(S, f, showAI, nowMs) {
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.clearRect(0, 0, W, H);
     drawGround(nowMs);
@@ -1104,6 +1289,19 @@ if (typeof module !== 'undefined') module.exports = BG_SCENARIOS;
   $('rSlow').addEventListener('click', function () { press('remoteSLOW'); });
   $('rCancel').addEventListener('click', function () { press('cancel'); });
 
+  var vC = $('vCctv'), vS = $('vScene');
+  var LABELS = {
+    cctv: 'Simulated CCTV feed from the camera on the VMS trailer, facing oncoming traffic. With the AI overlay on, detected vehicles show boxes, levels and predicted paths.',
+    scene: canvas.getAttribute('aria-label')
+  };
+  function setView(m) {
+    mode = m;
+    vC.setAttribute('aria-pressed', m === 'cctv'); vS.setAttribute('aria-pressed', m === 'scene');
+    canvas.setAttribute('aria-label', LABELS[m]);
+  }
+  vC.addEventListener('click', function () { setView('cctv'); });
+  vS.addEventListener('click', function () { setView('scene'); });
+  setView('cctv');
   load(0);
   if (reduced) { build(BG.TK(19.0)); }
   syncPlay();

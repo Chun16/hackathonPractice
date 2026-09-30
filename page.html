@@ -52,6 +52,13 @@ h1,h2,h3,p{margin:0}
 .chip.focus{border-color:var(--low);color:var(--low)}
 .stage{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(320px,1fr);gap:22px;align-items:start}
 @media (max-width:980px){.stage{grid-template-columns:minmax(0,1fr)}}
+.viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:10px}
+.viewtabs{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel-2)}
+.vt{min-height:40px;padding:0 16px;border:0;background:transparent;font-weight:600;cursor:pointer;color:var(--muted)}
+.vt+.vt{border-left:1px solid var(--line)}
+.vt[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.vt:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}
+.viewhint{font-size:13px;color:var(--muted);min-width:0;flex:1 1 260px}
 .cam{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0A0F14}
 #scene{display:block;width:100%;height:auto;aspect-ratio:880/620;max-width:100%}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding-top:12px}
@@ -132,7 +139,14 @@ select{min-height:44px;padding:0 10px;border:1px solid var(--line);background:va
 </header>
 
 <main class="stage">
-  <section aria-label="AI scene view">
+  <section aria-label="Camera and scene view">
+    <div class="viewbar">
+      <div class="viewtabs" role="group" aria-label="Left panel view">
+        <button type="button" class="vt" id="vCctv" aria-pressed="true">CCTV camera</button>
+        <button type="button" class="vt" id="vScene" aria-pressed="false">AI scene view</button>
+      </div>
+      <p class="viewhint">CCTV camera: what the trailer's camera sees. AI scene view: the site rebuilt from CCTV and radar.</p>
+    </div>
     <div class="cam"><canvas id="scene" width="880" height="620" role="img" aria-label="AI scene view rebuilt from CCTV and radar: two same-direction lanes, the outer lane closed with cones, workers in the closed lane, a VMS trailer showing the sign board, and approaching vehicles with predicted paths"></canvas></div>
     <div class="controls">
       <label class="field" for="scn">Scenario <select id="scn"></select></label>
