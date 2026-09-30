@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BatonGuard Demo</title>
+<meta name="description" content="BatonGuard demo: AI watches the traffic at a work zone and warns traffic controllers before impact.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Control-room layout: AI scene view on the left, decisions and controls on the right. */
+:root{
+  --bg:#0D141B; --panel:#141E28; --panel-2:#1B2733; --line:#2A3947;
+  --fg:#E8EFF5; --muted:#9BAEBF; --accent:#FFB020; --accent-ink:#1A1204;
+  --low:#3DDBC4; --low-tint:rgba(61,219,196,.08);
+  --high:#FF9A4D; --high-tint:rgba(255,154,77,.12); --ink-on-high:#1A0A02;
+  --crit:#FF5A5F; --crit-tint:rgba(255,90,95,.14); --ink-on-crit:#1F0507;
+  --f-display:'Barlow Condensed','Arial Narrow',Arial,sans-serif;
+  --f-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --f-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#EEF2F6; --panel:#FFFFFF; --panel-2:#F3F6F9; --line:#CBD5DF;
+    --fg:#0F1A24; --muted:#4A5C6C; --accent:#F59E0B; --accent-ink:#1A1204;
+    --low:#0B7A6B; --low-tint:rgba(11,122,107,.07);
+    --high:#C2410C; --high-tint:rgba(194,65,12,.08); --ink-on-high:#FFFFFF;
+    --crit:#B42318; --crit-tint:rgba(180,35,24,.08); --ink-on-crit:#FFFFFF;
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#EEF2F6; --panel:#FFFFFF; --panel-2:#F3F6F9; --line:#CBD5DF;
+  --fg:#0F1A24; --muted:#4A5C6C; --accent:#F59E0B; --accent-ink:#1A1204;
+  --low:#0B7A6B; --low-tint:rgba(11,122,107,.07);
+  --high:#C2410C; --high-tint:rgba(194,65,12,.08); --ink-on-high:#FFFFFF;
+  --crit:#B42318; --crit-tint:rgba(180,35,24,.08); --ink-on-crit:#FFFFFF;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.45;padding-inline:clamp(16px,2vw,28px);padding-block:18px 32px}
+h1,h2,h3,p{margin:0}
+.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;margin-bottom:16px}
+.brand{font-family:var(--f-display);font-weight:700;font-size:36px;letter-spacing:.05em;text-transform:uppercase;line-height:1}
+.tag{color:var(--muted);font-size:14px;margin-top:6px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:var(--f-mono);font-weight:600;font-size:12.5px;padding:7px 11px;border:1px solid var(--line);background:var(--panel);border-radius:4px}
+.chip[data-level="1"]{background:var(--high);border-color:var(--high);color:var(--ink-on-high)}
+.chip[data-level="2"]{background:var(--crit);border-color:var(--crit);color:var(--ink-on-crit)}
+.chip.focus{border-color:var(--low);color:var(--low)}
+.stage{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(320px,1fr);gap:22px;align-items:start}
+@media (max-width:980px){.stage{grid-template-columns:minmax(0,1fr)}}
+.cam{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0A0F14}
+#scene{display:block;width:100%;height:auto;aspect-ratio:880/620;max-width:100%}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding-top:12px}
+button,select{font:inherit;color:var(--fg)}
+.btn{min-height:44px;padding:0 16px;border:1px solid var(--line);background:var(--panel-2);border-radius:4px;font-weight:600;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);min-width:88px}
+.btn:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.field{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+select{min-height:44px;padding:0 10px;border:1px solid var(--line);background:var(--panel-2);border-radius:4px;max-width:100%}
+#scn{min-width:0;flex:1 1 240px}
+.check{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px;cursor:pointer}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+.scrub{flex:1 1 220px;min-width:0;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.scrub input{flex:1;min-width:0;accent-color:var(--accent);height:44px}
+.caption{margin-top:10px;color:var(--muted);font-size:14px;max-width:75ch}
+.caption b{color:var(--fg);font-weight:600}
+.legend{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
+.side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.card{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:12px 14px}
+.side h2{font-family:var(--f-display);font-weight:600;font-size:20px;letter-spacing:.04em;text-transform:uppercase}
+.resp{display:grid;gap:8px}
+.resp[data-level="1"]{border:2px solid var(--high);background:var(--high-tint);padding:11px 13px}
+.resp[data-level="2"]{border:2px solid var(--crit);background:var(--crit-tint);padding:11px 13px}
+.resp .lvl{font-family:var(--f-display);font-weight:700;font-size:24px;letter-spacing:.04em;text-transform:uppercase;line-height:1.05}
+.resp .why{font-size:14px}
+.outs{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13.5px;margin:0}
+.outs dt{color:var(--muted)}
+.outs dd{margin:0;font-weight:500}
+.note{font-size:13px;padding:6px 9px;border-radius:4px;border:1px dashed var(--muted);color:var(--fg)}
+.remote{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.remote .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.remote .lbl{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.remote .row{display:flex;gap:8px}
+.remote .row .btn{flex:1;padding:0 8px}
+.btn.stop{border-color:var(--crit);color:var(--crit)}
+.btn.slow{border-color:var(--accent);color:var(--accent)}
+.listhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+.listhead span{font-size:12.5px;color:var(--muted)}
+.list{display:flex;flex-direction:column;gap:6px}
+.veh{display:grid;gap:2px;padding:7px 10px;border:1px solid var(--line);background:var(--panel-2);border-radius:5px;border-left-width:4px;border-left-color:var(--low)}
+.veh[data-level="1"]{border-color:var(--high);background:var(--high-tint);border-left-width:4px}
+.veh[data-level="2"]{border-color:var(--crit);background:var(--crit-tint);border-left-width:4px}
+.r1{display:flex;align-items:center;gap:8px}
+.vid{font-family:var(--f-display);font-weight:700;font-size:19px;line-height:1;min-width:32px}
+.badge{font-family:var(--f-mono);font-weight:600;font-size:11px;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid var(--low);color:var(--low)}
+.veh[data-level="1"] .badge{background:var(--high);border-color:var(--high);color:var(--ink-on-high)}
+.veh[data-level="2"] .badge{background:var(--crit);border-color:var(--crit);color:var(--ink-on-crit)}
+.spd{margin-left:auto;font-family:var(--f-display);font-weight:600;font-size:22px;line-height:1;font-variant-numeric:tabular-nums}
+.spd small{font-family:var(--f-body);font-size:11.5px;color:var(--muted);margin-left:3px;font-weight:500}
+.r2{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r3{font-size:13px}
+.more{font-size:12.5px;color:var(--muted);padding:2px 2px 0}
+.evlog{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.ev{display:grid;gap:1px;padding:6px 9px;border-radius:4px;background:var(--panel-2);border-left:4px solid var(--high)}
+.ev[data-max="2"]{border-left-color:var(--crit)}
+.ev .h{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.dec{font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.dec b{font-family:var(--f-mono);font-weight:600;color:var(--fg);margin-right:6px}
+.foot{font-size:12.5px;color:var(--muted);max-width:70ch}
+.foot ul{margin:6px 0 0;padding-left:18px;display:grid;gap:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1 class="brand">BatonGuard</h1>
+    <p class="tag">AI watches the traffic, warns before impact</p>
+  </div>
+  <div class="chips" aria-label="System status">
+    <span class="chip" id="boardChip">Sign board: SLOW</span>
+    <span class="chip" id="alertChip" data-level="0">Alert: L0 NORMAL</span>
+    <span class="chip focus" id="focusChip">AI watched 0 vehicles · 0 needed your attention</span>
+  </div>
+</header>
+
+<main class="stage">
+  <section aria-label="AI scene view">
+    <div class="cam"><canvas id="scene" width="880" height="620" role="img" aria-label="AI scene view rebuilt from CCTV and radar: two same-direction lanes, the outer lane closed with cones, workers in the closed lane, a VMS trailer showing the sign board, and approaching vehicles with predicted paths"></canvas></div>
+    <div class="controls">
+      <label class="field" for="scn">Scenario <select id="scn"></select></label>
+      <button class="btn primary" id="play" type="button">Pause</button>
+      <button class="btn" id="restart" type="button">Restart</button>
+      <label class="field" for="speed">Speed
+        <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
+      </label>
+      <label class="check" for="ai"><input type="checkbox" id="ai" checked>AI overlay</label>
+      <label class="scrub" for="scrub">Time<input type="range" id="scrub" min="0" max="420" step="1" value="0"></label>
+    </div>
+    <p class="caption" id="caption"></p>
+    <div class="legend" aria-hidden="true">
+      <span><i style="background:#2EE6C5"></i>NORMAL</span>
+      <span><i style="background:#FF9A4D"></i>CAUTION</span>
+      <span><i style="background:#FF4D52"></i>EVACUATE</span>
+      <span><i style="background:#FFA23F;height:3px"></i>Dashed box: worker zone</span>
+      <span>Hatched lane: closed lane</span>
+      <span>Dotted line: AI predicted path, next 5 s</span>
+    </div>
+  </section>
+
+  <aside class="side" aria-label="Decisions and controls">
+    <div class="card resp" id="resp" data-level="0">
+      <span class="lvl" id="respLvl">L0 NORMAL</span>
+      <p class="why" id="respWhy">No vehicle needs attention.</p>
+      <dl class="outs">
+        <dt>Sign board</dt><dd id="oBoard">SLOW</dd>
+        <dt>Beacons</dt><dd id="oFlash">Off</dd>
+        <dt>Siren</dt><dd id="oSiren">Off</dd>
+        <dt>Wristband</dt><dd id="oWrist">Quiet</dd>
+      </dl>
+      <p class="note" id="respNote" hidden></p>
+    </div>
+
+    <div class="card remote">
+      <div class="grp">
+        <span class="lbl">Controller remote</span>
+        <div class="row">
+          <button class="btn stop" id="rStop" type="button">STOP</button>
+          <button class="btn slow" id="rSlow" type="button">SLOW</button>
+        </div>
+      </div>
+      <div class="grp">
+        <span class="lbl">Worker wristband</span>
+        <div class="row"><button class="btn" id="rCancel" type="button">Cancel alert</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="listhead"><h2>Vehicles in view</h2><span id="count">0</span></div>
+      <div class="list" id="list"></div>
+    </div>
+
+    <div class="card">
+      <div class="listhead"><h2>Event log</h2><span>Newest first</span></div>
+      <div class="evlog" id="evlog"></div>
+      <div class="dec" id="dec"></div>
+    </div>
+
+    <div class="foot">
+      <b>Rules (demo values).</b> NORMAL / CAUTION / EVACUATE are confirmed after 3 of the last 5 checks (every 0.1 s).
+      <ul>
+        <li>EVACUATE: entering the worker zone within 3 s; on STOP, needs over 4.5 m/s² to stop, or ran the stop line.</li>
+        <li>CAUTION: heading into the closed lane within 3 s; drifting toward workers; on STOP, needs over 3.0 m/s², or needs over 2.0 m/s² and is not braking; on SLOW, over 50 km/h and not slowing.</li>
+        <li>Auto-STOP only when every car before the line can still stop comfortably. After EVACUATE the board stays on STOP until the controller releases it.</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+<div class="sr" id="live" aria-live="polite"></div>
+<!-- SCRIPTS -->
+</body>
+</html>
